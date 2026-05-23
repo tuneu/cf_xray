@@ -15,7 +15,10 @@ DEFAULT_WS_CLIENT_ADDR="${CXN_DEFAULT_WS_CLIENT_ADDR:-www.wto.org}"
 red='\033[0;31m'
 green='\033[0;32m'
 yellow='\033[0;33m'
+blue='\033[0;34m'
 cyan='\033[0;36m'
+bold='\033[1m'
+dim='\033[2m'
 plain='\033[0m'
 
 tmp_dir=""
@@ -55,17 +58,87 @@ reality_spider_x="/"
 reality_tag=""
 
 CLOUDFLARE_WS_TLS_PORTS="443 8443 2053 2083 2087 2096"
+UI_LINE="----------------------------------------------------------------------"
+
+ui_line() {
+  printf '%b%s%b\n' "${dim}" "${UI_LINE}" "${plain}"
+}
+
+ui_title() {
+  local title="$1"
+  local subtitle="${2:-}"
+
+  echo
+  ui_line
+  printf '%b%s%b\n' "${bold}${cyan}" "${title}" "${plain}"
+  if [[ -n "${subtitle}" ]]; then
+    printf '%b%s%b\n' "${dim}" "${subtitle}" "${plain}"
+  fi
+  ui_line
+}
+
+ui_section() {
+  echo
+  printf '%b== %s ==%b\n' "${bold}${cyan}" "$*" "${plain}"
+}
+
+ui_group() {
+  printf '%b-- %s --%b\n' "${cyan}" "$*" "${plain}"
+}
+
+ui_kv() {
+  local key="$1"
+  local value="$2"
+
+  printf '  %b%-16s%b %s\n' "${cyan}" "${key}:" "${plain}" "${value}"
+}
+
+ui_option() {
+  local number="$1"
+  local label="$2"
+  local detail="${3:-}"
+
+  if [[ -n "${detail}" ]]; then
+    printf '  %b%2s%b) %-22s %b%s%b\n' "${yellow}" "${number}" "${plain}" "${label}" "${dim}" "${detail}" "${plain}"
+  else
+    printf '  %b%2s%b) %s\n' "${yellow}" "${number}" "${plain}" "${label}"
+  fi
+}
+
+ui_note() {
+  printf '  %b%s%b\n' "${dim}" "$*" "${plain}"
+}
+
+ui_clear_screen() {
+  if [[ -t 1 ]]; then
+    printf '\033[H\033[2J\033[3J'
+  fi
+}
+
+pause_for_enter() {
+  local message="${1:-按 Enter 返回主菜单}"
+  local _
+
+  echo
+  read -r -p "$(printf '%b%s%b' "${cyan}" "${message}" "${plain}")" _ || true
+}
+
+run_menu_action() {
+  "$@"
+  pause_for_enter
+  ui_clear_screen
+}
 
 log() {
-  echo -e "${green}$*${plain}" >&2
+  printf '%b[INFO]%b %s\n' "${blue}" "${plain}" "$*" >&2
 }
 
 warn() {
-  echo -e "${yellow}$*${plain}" >&2
+  printf '%b[WARN]%b %s\n' "${yellow}" "${plain}" "$*" >&2
 }
 
 err() {
-  echo -e "${red}$*${plain}" >&2
+  printf '%b[ERR]%b %s\n' "${red}" "${plain}" "$*" >&2
 }
 
 die() {
@@ -84,12 +157,15 @@ prompt() {
   local message="$1"
   local default="${2:-}"
   local value
+  local prompt_text
 
   if [[ -n "${default}" ]]; then
-    read -r -p "$(echo -e "${cyan}${message}${plain} [${default}]: ")" value
+    prompt_text="$(printf '%b%s%b %b[%s]%b: ' "${cyan}" "${message}" "${plain}" "${dim}" "${default}" "${plain}")"
+    read -r -p "${prompt_text}" value
     printf '%s' "${value:-$default}"
   else
-    read -r -p "$(echo -e "${cyan}${message}${plain}: ")" value
+    prompt_text="$(printf '%b%s%b: ' "${cyan}" "${message}" "${plain}")"
+    read -r -p "${prompt_text}" value
     printf '%s' "${value}"
   fi
 }
@@ -99,9 +175,11 @@ confirm() {
   local default="${2:-y}"
   local suffix="[Y/n]"
   local value
+  local prompt_text
 
   [[ "${default}" == "n" ]] && suffix="[y/N]"
-  read -r -p "$(echo -e "${cyan}${message}${plain} ${suffix}: ")" value
+  prompt_text="$(printf '%b%s%b %b%s%b: ' "${cyan}" "${message}" "${plain}" "${dim}" "${suffix}" "${plain}")"
+  read -r -p "${prompt_text}" value
   value="${value:-$default}"
   [[ "${value}" =~ ^[Yy]$ ]]
 }
@@ -687,10 +765,10 @@ configure_certificate() {
   local key_path
 
   mkdir -p "${CERT_DIR}"
-  echo
-  echo "证书输入方式："
-  echo "  1) 粘贴证书/私钥 PEM 内容"
-  echo "  2) 填写已有证书/私钥文件路径"
+  ui_section "证书配置"
+  ui_note "WS+TLS 节点需要证书和私钥；脚本会统一保存到 ${CERT_DIR}。"
+  ui_option "1" "粘贴 PEM 内容" "适合 Cloudflare Origin Certificate"
+  ui_option "2" "填写文件路径" "使用服务器上已有证书文件"
 
   while true; do
     mode="$(prompt "请选择证书输入方式" "1")"
@@ -723,12 +801,13 @@ configure_certificate() {
 
 select_protocols() {
   local selected
+  local item
 
-  echo
-  echo "请选择要启用的节点，多个选项可用逗号或空格分隔："
-  echo "  1) VLESS + WebSocket + TLS"
-  echo "  2) VMess + WebSocket + TLS"
-  echo "  3) VLESS + Reality + Vision"
+  ui_section "选择节点类型"
+  ui_note "多个选项可用逗号或空格分隔，例如 1,3。"
+  ui_option "1" "VLESS WS TLS" "经 Cloudflare CDN 回源"
+  ui_option "2" "VMess WS TLS" "经 Cloudflare CDN 回源"
+  ui_option "3" "VLESS Reality Vision" "直连 TCP，不走 CDN"
   selected="$(prompt "选择" "1,2,3")"
 
   selected="${selected//,/ }"
@@ -837,13 +916,15 @@ collect_ws_settings() {
   local cert_label
 
   if (( vless_ws_enabled || vmess_ws_enabled )); then
-    echo
-    log "配置 WebSocket + TLS 节点..."
+    ui_section "WebSocket + TLS"
+    ui_note "用于 Cloudflare CDN 回源。domain/Host/SNI 通常填写已接入 Cloudflare 的域名。"
+    ui_note "客户端公开端口会写入分享链接；源站监听端口用于 Xray inbound。"
     ws_domain="$(ask_domain "请输入已接入 Cloudflare 的域名" "${ws_domain}")"
     ws_client_addr="$(prompt "客户端连接地址，可填优选域名/IP" "${DEFAULT_WS_CLIENT_ADDR}")"
     ws_client_port="$(ask_ws_client_port "${ws_client_port:-443}")"
 
     if (( vless_ws_enabled )); then
+      ui_group "VLESS WS TLS"
       vless_ws_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "8443")"
       vless_ws_public_port="${ws_client_port}"
       default_path="${vless_ws_path:-$(generate_random_ws_path vless)}"
@@ -853,6 +934,7 @@ collect_ws_settings() {
     fi
 
     if (( vmess_ws_enabled )); then
+      ui_group "VMess WS TLS"
       vmess_ws_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "2096")"
       vmess_ws_public_port="${ws_client_port}"
       default_path="${vmess_ws_path:-$(generate_random_ws_path vmess)}"
@@ -880,8 +962,9 @@ collect_reality_settings() {
   local default_short_id
 
   if (( reality_enabled )); then
-    echo
-    log "配置 Reality 节点..."
+    ui_section "Reality Vision"
+    ui_note "Reality 是直连 TCP 节点，不适合套 Cloudflare CDN。"
+    ui_note "客户端地址通常填写 VPS 公网 IP；目标域名用于 Reality serverNames/dest。"
     detected_ip="$(detect_public_ip)"
     reality_addr="$(prompt "Reality 客户端连接地址/IP" "${detected_ip}")"
     [[ -n "${reality_addr}" ]] || die "Reality 客户端连接地址不能为空。"
@@ -1492,31 +1575,77 @@ restart_xray() {
   fi
 }
 
+xray_service_status_text() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl --quiet is-active "${XRAY_SERVICE_NAME}" 2>/dev/null; then
+    printf '%bactive%b' "${green}" "${plain}"
+  elif command -v xray >/dev/null 2>&1 || [[ -x /usr/local/bin/xray ]]; then
+    printf '%binstalled%b' "${yellow}" "${plain}"
+  else
+    printf '%bnot installed%b' "${dim}" "${plain}"
+  fi
+}
+
+state_status_text() {
+  if state_exists; then
+    printf '%bready%b' "${green}" "${plain}"
+  else
+    printf '%bnot initialized%b' "${dim}" "${plain}"
+  fi
+}
+
+links_status_text() {
+  if [[ -s "${LINKS_FILE}" ]]; then
+    printf '%bready%b' "${green}" "${plain}"
+  else
+    printf '%bempty%b' "${dim}" "${plain}"
+  fi
+}
+
+menu_node_count() {
+  if state_exists; then
+    node_count
+  else
+    printf '0'
+  fi
+}
+
+node_type_label() {
+  case "$1" in
+    vless-ws-tls)
+      printf 'VLESS WS TLS'
+      ;;
+    vmess-ws-tls)
+      printf 'VMess WS TLS'
+      ;;
+    vless-reality-vision)
+      printf 'Reality Vision'
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+
 print_state_summary() {
   local action="${1:-操作完成}"
   local count
 
   count="$(node_count)"
-  echo
-  log "${action}。"
-  echo "状态文件：${STATE_FILE}"
-  echo "Xray 配置文件：${CONFIG_FILE}"
-  echo "节点链接文件：${LINKS_FILE}"
-  echo "当前节点数量：${count}"
+  ui_title "${action}" "Cloudflare Xray Node 状态摘要"
+  ui_kv "状态文件" "${STATE_FILE}"
+  ui_kv "Xray 配置" "${CONFIG_FILE}"
+  ui_kv "节点链接" "${LINKS_FILE}"
+  ui_kv "节点数量" "${count}"
 
   if (( count > 0 )); then
-    echo
-    warn "Cloudflare CDN 提醒："
-    echo "  - WS+TLS 节点用于 Cloudflare 代理；Reality 节点是直连 TCP，不走 CDN。"
-    echo "  - Cloudflare HTTPS 标准端口：443、2053、2083、2087、2096、8443。"
-    echo "  - 节点列表里的 port 是源站实际监听端口；public 是分享链接里的客户端公开端口。"
-    echo "  - 当 public 与 port 不一致时，请确认你已在 Cloudflare Origin Rule 或前置代理里完成回源映射。"
-    echo
-    echo "节点列表："
+    ui_section "Cloudflare 提醒"
+    ui_note "WS+TLS 节点用于 Cloudflare 代理；Reality 节点是直连 TCP，不走 CDN。"
+    ui_note "Cloudflare HTTPS 标准端口：443、2053、2083、2087、2096、8443。"
+    ui_note "listen 是源站实际监听端口；public 是分享链接里的客户端公开端口。"
+    ui_note "当 public 与 listen 不一致时，请确认 Origin Rule 或前置代理已完成回源映射。"
     list_nodes
     if [[ -s "${LINKS_FILE}" ]]; then
-      echo
-      echo "节点链接："
+      ui_section "节点链接"
       cat "${LINKS_FILE}"
     fi
   fi
@@ -1554,6 +1683,7 @@ list_nodes() {
   local node_json
   local node_name
   local type
+  local type_label
   local port
   local public_port
   local host
@@ -1562,6 +1692,7 @@ list_nodes() {
   local target
   local target_port
   local short_id
+  local detail
 
   if ! state_exists; then
     warn "尚未发现状态文件：${STATE_FILE}"
@@ -1573,10 +1704,15 @@ list_nodes() {
     return 0
   fi
 
+  ui_section "节点列表"
+  printf '  %b%-4s %-18s %-16s %s%b\n' "${bold}" "ID" "名称" "类型" "详情" "${plain}"
+  printf '  %b%s%b\n' "${dim}" "${UI_LINE}" "${plain}"
+
   while IFS= read -r node_json; do
     index=$((index + 1))
     node_name="$(node_display_name_from_json "${node_json}")"
     type="$(jq -r '.type' <<<"${node_json}")"
+    type_label="$(node_type_label "${type}")"
 
     case "${type}" in
       vless-ws-tls|vmess-ws-tls)
@@ -1584,7 +1720,8 @@ list_nodes() {
         public_port="$(jq -r '.public_port // .port' <<<"${node_json}")"
         host="$(jq -r '.host' <<<"${node_json}")"
         path="$(jq -r '.path' <<<"${node_json}")"
-        echo "${index}) ${node_name}  ${type}  port:${port} public:${public_port} host:${host} path:${path}"
+        detail="listen:${port} public:${public_port} host:${host} path:${path}"
+        printf '  %b%-4s%b %-18s %-16s %s\n' "${yellow}" "${index}" "${plain}" "${node_name}" "${type_label}" "${detail}"
         ;;
       vless-reality-vision)
         addr="$(jq -r '.addr' <<<"${node_json}")"
@@ -1592,10 +1729,11 @@ list_nodes() {
         target="$(jq -r '.target' <<<"${node_json}")"
         target_port="$(jq -r '.target_port' <<<"${node_json}")"
         short_id="$(jq -r '.short_id' <<<"${node_json}")"
-        echo "${index}) ${node_name}  ${type}  addr:${addr}:${port} target:${target}:${target_port} sid:${short_id}"
+        detail="addr:${addr}:${port} target:${target}:${target_port} sid:${short_id}"
+        printf '  %b%-4s%b %-18s %-16s %s\n' "${yellow}" "${index}" "${plain}" "${node_name}" "${type_label}" "${detail}"
         ;;
       *)
-        echo "${index}) ${node_name}  ${type}"
+        printf '  %b%-4s%b %-18s %-16s %s\n' "${yellow}" "${index}" "${plain}" "${node_name}" "${type_label}" ""
         ;;
     esac
   done < <(jq -c '.nodes[]?' "${STATE_FILE}")
@@ -1611,7 +1749,7 @@ select_node_index() {
   count="$(node_count)"
   (( count > 0 )) || die "当前没有可操作节点。"
   server_name="$(server_display_hostname)"
-  list_nodes
+  list_nodes >&2
 
   while true; do
     value="$(prompt "请输入节点编号、名字或 tag")"
@@ -1670,10 +1808,25 @@ ensure_uuid_for_state() {
   update_state_uuid
 }
 
+confirm_reinitialize_existing_nodes() {
+  local count
+
+  state_exists || return 0
+  count="$(node_count)"
+  (( count > 0 )) || return 0
+
+  ui_section "检测到已有节点"
+  ui_note "当前已有 ${count} 个本脚本管理的节点。选择继续后会重新初始化状态并重建节点配置。"
+  list_nodes
+  confirm "是否继续安装/重新初始化（回车默认继续）" "y" || die "已取消。"
+}
+
 cmd_install() {
   need_root
   check_system
 
+  ui_title "安装/重新初始化" "安装或更新 Xray，并重新初始化本脚本管理的节点。"
+  confirm_reinitialize_existing_nodes
   tmp_dir="$(mktemp -d)"
   install_dependencies
   install_xray
@@ -1701,6 +1854,7 @@ cmd_add() {
   load_state_globals
   ensure_uuid_for_state
 
+  ui_title "新增节点" "在现有状态上追加节点，并重建 Xray 配置。"
   reset_selection_flags
   load_state_globals
   select_protocols
@@ -1742,6 +1896,7 @@ modify_ws_node() {
   current_host="$(jq -r --argjson index "${index}" '.nodes[$index].host' "${STATE_FILE}")"
   [[ "${type}" == "vless-ws-tls" ]] && label="VLESS" || label="VMess"
 
+  ui_section "修改 ${label} WS TLS"
   new_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "${current_port}")"
   new_public_port="${current_public_port}"
   new_path="$(ask_ws_path "${label}" "${current_path}")"
@@ -1795,6 +1950,7 @@ modify_reality_node() {
   current_target_port="$(jq -r --argjson index "${index}" '.nodes[$index].target_port' "${STATE_FILE}")"
   current_short_id="$(jq -r --argjson index "${index}" '.nodes[$index].short_id' "${STATE_FILE}")"
 
+  ui_section "修改 Reality Vision"
   new_addr="$(prompt "Reality 客户端连接地址/IP" "${current_addr}")"
   [[ -n "${new_addr}" ]] || die "Reality 客户端连接地址不能为空。"
   new_port="$(ask_port "Reality" "${current_port}")"
@@ -1830,6 +1986,7 @@ cmd_modify() {
   resolve_xray_bin
   tmp_dir="$(mktemp -d)"
   ensure_state
+  ui_title "修改节点" "选择一个已有节点后更新端口、Path、Host/SNI 或 Reality 参数。"
   index="$(select_node_index)"
   type="$(jq -r --argjson index "${index}" '.nodes[$index].type' "${STATE_FILE}")"
 
@@ -1859,6 +2016,7 @@ cmd_delete_all() {
   resolve_xray_bin
   tmp_dir="$(mktemp -d)"
   ensure_state
+  ui_title "清空节点" "此操作只清空本脚本管理的节点并重建空配置，不卸载 Xray。"
   list_nodes
 
   confirm "确认清空所有已管理节点（不卸载 Xray）并重建空配置吗" "n" || die "已取消。"
@@ -1880,16 +2038,19 @@ cmd_links() {
     show_qr_in_links=1
   fi
   write_links_from_state
+  ui_title "节点链接" "链接文件：${LINKS_FILE}"
   cat "${LINKS_FILE}"
 }
 
 cmd_restart() {
   need_root
   restart_xray
+  log "Xray 服务已重启。"
 }
 
 cmd_uninstall() {
   need_root
+  ui_title "卸载 Xray" "将调用官方脚本移除 Xray，并删除状态、链接和配置目录。"
   confirm "确认卸载 Xray，并移除状态文件、链接文件和配置目录 ${CONFIG_DIR} 吗" "y" || die "已取消。"
 
   if [[ -x /usr/local/bin/xray ]]; then
@@ -1924,31 +2085,50 @@ EOF
 
 show_menu() {
   local choice
+  local count
 
+  ui_clear_screen
   while true; do
+    count="$(menu_node_count)"
+    ui_title "Cloudflare Xray Node" "VLESS/VMess WS TLS + Reality Vision 管理脚本"
+    ui_kv "Xray 服务" "$(xray_service_status_text)"
+    ui_kv "状态文件" "$(state_status_text)  ${STATE_FILE}"
+    ui_kv "节点数量" "${count}"
+    ui_kv "链接文件" "$(links_status_text)  ${LINKS_FILE}"
+
     echo
-    echo "Cloudflare Xray Node 管理菜单"
-    echo "  1) 安装/重新初始化节点"
-    echo "  2) 查看已安装节点"
-    echo "  3) 新增节点"
-    echo "  4) 修改节点配置"
-    echo "  5) 清空所有节点"
-    echo "  6) 显示节点链接"
-    echo "  7) 重启 Xray"
-    echo "  8) 卸载"
-    echo "  0) 退出"
+    ui_group "节点管理"
+    ui_option "1" "安装/重新初始化"
+    ui_option "2" "查看节点"
+    ui_option "3" "新增节点"
+    ui_option "4" "修改节点"
+
+    echo
+    ui_group "服务管理"
+    ui_option "6" "显示节点链接"
+    ui_option "7" "重启 Xray"
+
+    echo
+    ui_group "危险操作"
+    ui_option "5" "清空所有节点"
+    ui_option "8" "卸载"
+    ui_option "0" "退出"
     choice="$(prompt "请选择")"
     case "${choice}" in
-      1) cmd_install ;;
-      2) cmd_list ;;
-      3) cmd_add ;;
-      4) cmd_modify ;;
-      5) cmd_delete_all ;;
-      6) cmd_links ;;
-      7) cmd_restart ;;
-      8) cmd_uninstall ;;
+      1) run_menu_action cmd_install ;;
+      2) run_menu_action cmd_list ;;
+      3) run_menu_action cmd_add ;;
+      4) run_menu_action cmd_modify ;;
+      5) run_menu_action cmd_delete_all ;;
+      6) run_menu_action cmd_links ;;
+      7) run_menu_action cmd_restart ;;
+      8) run_menu_action cmd_uninstall ;;
       0) return ;;
-      *) warn "未知选项：${choice}" ;;
+      *)
+        warn "未知选项：${choice}"
+        pause_for_enter
+        ui_clear_screen
+        ;;
     esac
   done
 }
