@@ -9,6 +9,7 @@ STATE_DIR="${CXN_STATE_DIR:-/etc/cloudflare-xray-node}"
 STATE_FILE="${STATE_DIR}/state.json"
 LINKS_FILE="${CXN_LINKS_FILE:-/root/xray-node-links.txt}"
 XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+XRAY_CORE_LATEST_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 XRAY_SERVICE_NAME="${CXN_XRAY_SERVICE_NAME:-xray}"
 DEFAULT_WS_CLIENT_ADDR="${CXN_DEFAULT_WS_CLIENT_ADDR:-www.wto.org}"
 
@@ -56,6 +57,11 @@ reality_short_id=""
 reality_fingerprint="chrome"
 reality_spider_x="/"
 reality_tag=""
+
+xray_update_checked=0
+xray_current_version_cache=""
+xray_latest_version_cache=""
+xray_update_state_cache=""
 
 CLOUDFLARE_WS_TLS_PORTS="443 8443 2053 2083 2087 2096"
 UI_LINE="----------------------------------------------------------------------"
@@ -270,16 +276,153 @@ install_xray() {
   resolve_xray_bin
 
   mkdir -p "${CONFIG_DIR}" "${CERT_DIR}"
+  xray_update_checked=0
+}
+
+find_xray_bin() {
+  if command -v xray >/dev/null 2>&1; then
+    command -v xray
+  elif [[ -x /usr/local/bin/xray ]]; then
+    printf '%s\n' "/usr/local/bin/xray"
+  else
+    return 1
+  fi
 }
 
 resolve_xray_bin() {
-  if command -v xray >/dev/null 2>&1; then
-    xray_bin="$(command -v xray)"
-  elif [[ -x /usr/local/bin/xray ]]; then
-    xray_bin="/usr/local/bin/xray"
-  else
+  if ! xray_bin="$(find_xray_bin)"; then
     die "未找到 xray 可执行文件，请先运行 install 或确认 Xray 已安装。"
   fi
+}
+
+xray_current_version() {
+  local bin
+  local raw
+  local version
+
+  bin="$(find_xray_bin)" || return 1
+  raw="$("${bin}" version 2>/dev/null | head -n 1 || true)"
+  if [[ -z "${raw}" ]]; then
+    raw="$("${bin}" --version 2>/dev/null | head -n 1 || true)"
+  fi
+  version="$(awk '{print $2}' <<<"${raw}")"
+  [[ -n "${version}" ]] || return 1
+  [[ "${version}" == v* ]] || version="v${version}"
+  printf '%s\n' "${version}"
+}
+
+xray_latest_version() {
+  local response
+  local version
+
+  command -v curl >/dev/null 2>&1 || return 1
+  response="$(curl -fsSL --connect-timeout 3 --max-time 8 "${XRAY_CORE_LATEST_API}" 2>/dev/null || true)"
+  [[ -n "${response}" ]] || return 1
+
+  if command -v jq >/dev/null 2>&1; then
+    version="$(jq -r '.tag_name // empty' <<<"${response}" 2>/dev/null || true)"
+  else
+    version="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"${response}" | head -n 1)"
+  fi
+
+  [[ -n "${version}" && "${version}" != "null" ]] || return 1
+  printf '%s\n' "${version}"
+}
+
+normalize_xray_version() {
+  local version="$1"
+  version="${version#v}"
+  printf '%s\n' "${version}"
+}
+
+refresh_xray_update_check() {
+  local current
+  local latest
+
+  current="$(xray_current_version 2>/dev/null || true)"
+  latest="$(xray_latest_version 2>/dev/null || true)"
+
+  xray_update_checked=1
+  xray_current_version_cache="${current}"
+  xray_latest_version_cache="${latest}"
+
+  if [[ -z "${current}" ]]; then
+    xray_update_state_cache="not-installed"
+  elif [[ -z "${latest}" ]]; then
+    xray_update_state_cache="unknown"
+  elif [[ "$(normalize_xray_version "${current}")" == "$(normalize_xray_version "${latest}")" ]]; then
+    xray_update_state_cache="latest"
+  else
+    xray_update_state_cache="available"
+  fi
+}
+
+ensure_xray_update_check() {
+  if (( ! xray_update_checked )); then
+    refresh_xray_update_check
+  fi
+}
+
+xray_update_status_text() {
+  ensure_xray_update_check
+
+  case "${xray_update_state_cache}" in
+    available)
+      printf '%b%s -> %s，可选择 9 更新%b' "${yellow}" "${xray_current_version_cache}" "${xray_latest_version_cache}" "${plain}"
+      ;;
+    latest)
+      printf '%b%s 已是最新%b' "${green}" "${xray_current_version_cache}" "${plain}"
+      ;;
+    not-installed)
+      printf '%b未安装，可选择 1 安装%b' "${dim}" "${plain}"
+      ;;
+    *)
+      if [[ -n "${xray_current_version_cache}" ]]; then
+        printf '%b%s，暂时无法检查最新版本%b' "${yellow}" "${xray_current_version_cache}" "${plain}"
+      else
+        printf '%b暂时无法检查最新版本%b' "${dim}" "${plain}"
+      fi
+      ;;
+  esac
+}
+
+update_xray_core() {
+  local install_user
+
+  need_root
+  check_system
+
+  ui_title "更新 Xray Core" "只更新 Xray 核心和 geodata，不重新初始化节点。"
+  refresh_xray_update_check
+  ui_kv "当前版本" "${xray_current_version_cache:-未安装}"
+  ui_kv "最新版本" "${xray_latest_version_cache:-未知}"
+
+  if [[ "${xray_update_state_cache}" == "latest" ]]; then
+    confirm "当前版本与最新版相同，是否重新安装 Xray Core" "n" || die "已取消。"
+  elif [[ "${xray_update_state_cache}" == "available" ]]; then
+    confirm "检测到新版 ${xray_latest_version_cache}，是否更新 Xray Core" "y" || die "已取消。"
+  elif [[ "${xray_update_state_cache}" == "not-installed" ]]; then
+    confirm "未检测到 Xray，是否安装最新稳定版 Xray Core" "y" || die "已取消。"
+  else
+    confirm "无法确认最新版本，是否仍然执行官方安装脚本更新 Xray Core" "n" || die "已取消。"
+  fi
+
+  install_user="$(desired_xray_install_user)"
+  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install -u "${install_user}"
+  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install-geodata
+  resolve_xray_bin
+
+  if [[ -s "${CONFIG_FILE}" ]]; then
+    test_xray_config "${CONFIG_FILE}"
+    restart_xray
+  else
+    warn "未找到现有配置文件 ${CONFIG_FILE}，已跳过配置测试和服务重启。"
+  fi
+
+  refresh_xray_update_check
+  ui_title "Xray Core 更新完成"
+  ui_kv "当前版本" "${xray_current_version_cache:-未知}"
+  ui_kv "最新版本" "${xray_latest_version_cache:-未知}"
 }
 
 validate_port_number() {
@@ -2048,6 +2191,10 @@ cmd_restart() {
   log "Xray 服务已重启。"
 }
 
+cmd_update_xray() {
+  update_xray_core
+}
+
 cmd_uninstall() {
   need_root
   ui_title "卸载 Xray" "将调用官方脚本移除 Xray，并删除状态、链接和配置目录。"
@@ -2072,6 +2219,7 @@ Cloudflare Xray Node 管理脚本
 命令：
   menu        打开交互菜单，默认命令
   install     安装/更新 Xray，并重新初始化已管理节点
+  update-xray 独立检查并更新 Xray Core，不重新初始化节点
   list        查看已安装节点
   add         新增 VLESS WS TLS、VMess WS TLS 或 Reality 节点
   modify      修改已有节点配置
@@ -2092,6 +2240,7 @@ show_menu() {
     count="$(menu_node_count)"
     ui_title "Cloudflare Xray Node" "VLESS/VMess WS TLS + Reality Vision 管理脚本"
     ui_kv "Xray 服务" "$(xray_service_status_text)"
+    ui_kv "Xray 版本" "$(xray_update_status_text)"
     ui_kv "状态文件" "$(state_status_text)  ${STATE_FILE}"
     ui_kv "节点数量" "${count}"
     ui_kv "链接文件" "$(links_status_text)  ${LINKS_FILE}"
@@ -2107,6 +2256,7 @@ show_menu() {
     ui_group "服务管理"
     ui_option "6" "显示节点链接"
     ui_option "7" "重启 Xray"
+    ui_option "9" "更新 Xray"
 
     echo
     ui_group "危险操作"
@@ -2123,6 +2273,7 @@ show_menu() {
       6) run_menu_action cmd_links ;;
       7) run_menu_action cmd_restart ;;
       8) run_menu_action cmd_uninstall ;;
+      9) run_menu_action cmd_update_xray ;;
       0) return ;;
       *)
         warn "未知选项：${choice}"
@@ -2139,6 +2290,7 @@ dispatch_command() {
   case "${command}" in
     menu) show_menu ;;
     install) cmd_install ;;
+    update-xray) cmd_update_xray ;;
     list) cmd_list ;;
     add) cmd_add ;;
     modify) cmd_modify ;;

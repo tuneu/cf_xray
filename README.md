@@ -47,6 +47,7 @@ sudo bash cloudflare-xray-node/install.sh
 
 ```bash
 sudo bash cloudflare-xray-node/install.sh install
+sudo bash cloudflare-xray-node/install.sh update-xray
 sudo bash cloudflare-xray-node/install.sh list
 sudo bash cloudflare-xray-node/install.sh add
 sudo bash cloudflare-xray-node/install.sh modify
@@ -60,6 +61,7 @@ sudo bash cloudflare-xray-node/install.sh uninstall
 
 - `menu`：打开交互菜单，默认命令。
 - `install`：安装或更新 Xray，并重新初始化本脚本管理的节点。
+- `update-xray`：独立检查并更新 Xray Core 和 geodata；不会重新初始化节点。
 - `list`：查看当前状态文件里的节点。
 - `add`：新增 VLESS WS TLS、VMess WS TLS 或 Reality 节点。
 - `modify`：按编号或 tag 修改已有节点。
