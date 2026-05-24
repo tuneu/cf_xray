@@ -16,6 +16,7 @@ WS+TLS 节点用于配合 Cloudflare CDN 回源；Reality 节点是直连 TCP，
 - root 用户运行安装、修改、删除、重启等动作
 
 脚本会安装或更新 Xray 最新稳定版，并写入 `/usr/local/etc/xray/config.json`。
+安装时会优先调用官方 `XTLS/Xray-install`；如果 GitHub API 或官方安装链路不可用，会自动回退到 GitHub release 直链安装。
 节点状态保存在 `/etc/cloudflare-xray-node/state.json`，分享链接保存在 `/root/xray-node-links.txt`。
 
 为避免 `WS + TLS` 使用文件证书时和官方 `XTLS/Xray-install` 默认的 `nobody` systemd 用户发生读权限冲突，这个脚本会显式用 `root` 作为 Xray 安装用户。

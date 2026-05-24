@@ -10,6 +10,10 @@ STATE_FILE="${STATE_DIR}/state.json"
 LINKS_FILE="${CXN_LINKS_FILE:-/root/xray-node-links.txt}"
 XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 XRAY_CORE_LATEST_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+XRAY_CORE_RELEASES_URL="https://github.com/XTLS/Xray-core/releases"
+XRAY_DAT_DIR="${CXN_XRAY_DAT_DIR:-/usr/local/share/xray}"
+XRAY_GEOIP_LATEST_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+XRAY_GEOSITE_LATEST_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
 XRAY_SERVICE_NAME="${CXN_XRAY_SERVICE_NAME:-xray}"
 DEFAULT_WS_CLIENT_ADDR="${CXN_DEFAULT_WS_CLIENT_ADDR:-www.wto.org}"
 
@@ -262,16 +266,312 @@ check_system() {
 install_dependencies() {
   log "安装基础依赖..."
   apt-get update
-  apt-get install -y curl wget jq qrencode ca-certificates openssl lsof iproute2 coreutils
+  apt-get install -y curl wget jq qrencode ca-certificates openssl lsof iproute2 coreutils unzip
+}
+
+download_with_fallback() {
+  local url="$1"
+  local output="$2"
+
+  if curl -fL --connect-timeout 5 --max-time 600 --retry 3 --retry-delay 2 -o "${output}" "${url}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  wget -q --tries=3 --timeout=20 -O "${output}" "${url}"
+}
+
+xray_release_arch() {
+  case "$(uname -m)" in
+    i386|i686)
+      printf '%s\n' "32"
+      ;;
+    amd64|x86_64)
+      printf '%s\n' "64"
+      ;;
+    armv5tel)
+      printf '%s\n' "arm32-v5"
+      ;;
+    armv6l)
+      printf '%s\n' "arm32-v6"
+      ;;
+    armv7|armv7l)
+      printf '%s\n' "arm32-v7a"
+      ;;
+    armv8|aarch64|arm64)
+      printf '%s\n' "arm64-v8a"
+      ;;
+    mips)
+      printf '%s\n' "mips32"
+      ;;
+    mipsle)
+      printf '%s\n' "mips32le"
+      ;;
+    mips64)
+      printf '%s\n' "mips64"
+      ;;
+    mips64le)
+      printf '%s\n' "mips64le"
+      ;;
+    ppc64)
+      printf '%s\n' "ppc64"
+      ;;
+    ppc64le)
+      printf '%s\n' "ppc64le"
+      ;;
+    riscv64)
+      printf '%s\n' "riscv64"
+      ;;
+    s390x)
+      printf '%s\n' "s390x"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+xray_release_archive_name() {
+  local arch
+
+  arch="$(xray_release_arch)" || return 1
+  printf '%s\n' "Xray-linux-${arch}.zip"
+}
+
+xray_release_download_url() {
+  local version="${1:-}"
+  local archive_name
+
+  archive_name="$(xray_release_archive_name)" || return 1
+
+  if [[ -n "${version}" ]]; then
+    printf '%s/download/%s/%s\n' "${XRAY_CORE_RELEASES_URL}" "${version}" "${archive_name}"
+  else
+    printf '%s/latest/download/%s\n' "${XRAY_CORE_RELEASES_URL}" "${archive_name}"
+  fi
+}
+
+xray_latest_version_from_redirect() {
+  local download_url
+  local location
+  local version
+
+  download_url="$(xray_release_download_url "")" || return 1
+  location="$(curl -fsSI --connect-timeout 3 --max-time 8 "${download_url}" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}' | tail -n 1)"
+  [[ -n "${location}" ]] || return 1
+
+  version="$(sed -n 's#.*releases/download/\(v[^/]*\)/.*#\1#p' <<<"${location}" | head -n 1)"
+  [[ -n "${version}" ]] || return 1
+  printf '%s\n' "${version}"
+}
+
+resolve_xray_install_user() {
+  local install_user
+
+  install_user="$(desired_xray_install_user)"
+  if ! id -u "${install_user}" >/dev/null 2>&1; then
+    warn "Xray 安装用户 ${install_user} 不存在，回退使用 root。"
+    install_user="root"
+  fi
+
+  printf '%s\n' "${install_user}"
+}
+
+install_xray_service_files() {
+  local install_user="$1"
+  local install_uid
+  local capability_bounding_set="CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
+  local ambient_capabilities="AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
+  local no_new_privileges="NoNewPrivileges=true"
+
+  install_uid="$(id -u "${install_user}" 2>/dev/null || printf '0')"
+  if [[ "${install_uid}" == "0" ]]; then
+    capability_bounding_set="#${capability_bounding_set}"
+    ambient_capabilities="#${ambient_capabilities}"
+    no_new_privileges="#${no_new_privileges}"
+  fi
+
+  cat >/etc/systemd/system/xray.service <<EOF
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=${install_user}
+${capability_bounding_set}
+${ambient_capabilities}
+${no_new_privileges}
+ExecStart=/usr/local/bin/xray run -config ${CONFIG_FILE}
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+RuntimeDirectory=xray
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  cat >/etc/systemd/system/xray@.service <<EOF
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=${install_user}
+${capability_bounding_set}
+${ambient_capabilities}
+${no_new_privileges}
+ExecStart=/usr/local/bin/xray run -config ${CONFIG_DIR}/%i.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+RuntimeDirectory=xray-%i
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  chmod 644 /etc/systemd/system/xray.service /etc/systemd/system/xray@.service
+  systemctl daemon-reload
+}
+
+install_xray_geodata_direct() {
+  local work_dir
+  local geoip_tmp
+  local geosite_tmp
+
+  work_dir="$(mktemp -d)"
+  geoip_tmp="${work_dir}/geoip.dat"
+  geosite_tmp="${work_dir}/geosite.dat"
+
+  if ! download_with_fallback "${XRAY_GEOIP_LATEST_URL}" "${geoip_tmp}"; then
+    rm -rf "${work_dir}"
+    return 1
+  fi
+
+  if ! download_with_fallback "${XRAY_GEOSITE_LATEST_URL}" "${geosite_tmp}"; then
+    rm -rf "${work_dir}"
+    return 1
+  fi
+
+  install -d "${XRAY_DAT_DIR}"
+  install -m 644 "${geoip_tmp}" "${XRAY_DAT_DIR}/geoip.dat"
+  install -m 644 "${geosite_tmp}" "${XRAY_DAT_DIR}/geosite.dat"
+  rm -rf "${work_dir}"
+}
+
+install_xray_direct() {
+  local install_user="$1"
+  local version=""
+  local download_url
+  local archive_name
+  local work_dir
+  local archive_path
+  local extract_dir
+  local service_group
+  local access_log
+  local error_log
+
+  archive_name="$(xray_release_archive_name)" || die "当前架构 $(uname -m) 暂不支持自动安装 Xray。"
+  work_dir="$(mktemp -d)"
+  archive_path="${work_dir}/${archive_name}"
+  extract_dir="${work_dir}/extract"
+  mkdir -p "${extract_dir}"
+
+  version="$(xray_latest_version 2>/dev/null || true)"
+  download_url="$(xray_release_download_url "${version}")" || {
+    rm -rf "${work_dir}"
+    die "无法生成 Xray 下载地址。"
+  }
+
+  if ! download_with_fallback "${download_url}" "${archive_path}"; then
+    if [[ -n "${version}" ]]; then
+      warn "按版本 ${version} 下载 Xray 失败，尝试 latest/download 直链。"
+      download_url="$(xray_release_download_url "")" || true
+      if [[ -z "${download_url}" ]] || ! download_with_fallback "${download_url}" "${archive_path}"; then
+        rm -rf "${work_dir}"
+        die "通过 release 直链下载 Xray 失败，请检查服务器到 github.com 的连通性。"
+      fi
+    else
+      rm -rf "${work_dir}"
+      die "通过 release 直链下载 Xray 失败，请检查服务器到 github.com 的连通性。"
+    fi
+  fi
+
+  unzip -qo "${archive_path}" -d "${extract_dir}" || {
+    rm -rf "${work_dir}"
+    die "解压 Xray 安装包失败：${archive_name}"
+  }
+
+  [[ -x "${extract_dir}/xray" ]] || {
+    rm -rf "${work_dir}"
+    die "安装包中未找到 xray 可执行文件。"
+  }
+
+  install -d "${CONFIG_DIR}" "${CERT_DIR}" "${XRAY_DAT_DIR}" "${XRAY_LOG_DIR}"
+  install -m 755 "${extract_dir}/xray" /usr/local/bin/xray
+
+  if ! install_xray_geodata_direct; then
+    if [[ -f "${extract_dir}/geoip.dat" && -f "${extract_dir}/geosite.dat" ]]; then
+      warn "独立下载 geodata 失败，回退使用 Xray 压缩包内置 geodata。"
+      install -m 644 "${extract_dir}/geoip.dat" "${XRAY_DAT_DIR}/geoip.dat"
+      install -m 644 "${extract_dir}/geosite.dat" "${XRAY_DAT_DIR}/geosite.dat"
+    else
+      rm -rf "${work_dir}"
+      die "无法安装 geodata，且压缩包内未包含 geoip.dat/geosite.dat。"
+    fi
+  fi
+
+  [[ -f "${CONFIG_FILE}" ]] || printf '{}\n' >"${CONFIG_FILE}"
+  access_log="${XRAY_LOG_DIR}/access.log"
+  error_log="${XRAY_LOG_DIR}/error.log"
+  touch "${access_log}" "${error_log}"
+
+  install_xray_service_files "${install_user}"
+
+  service_group="$(effective_xray_service_group "${install_user}")"
+  apply_runtime_ownership "${CONFIG_DIR}" 750 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${CONFIG_FILE}" 640 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${CERT_DIR}" 750 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${XRAY_LOG_DIR}" 750 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${access_log}" 640 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${error_log}" 640 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${XRAY_DAT_DIR}" 755 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${XRAY_DAT_DIR}/geoip.dat" 644 "${install_user}" "${service_group}"
+  apply_runtime_ownership "${XRAY_DAT_DIR}/geosite.dat" 644 "${install_user}" "${service_group}"
+
+  rm -rf "${work_dir}"
+}
+
+install_xray_via_official_script() {
+  local install_user="$1"
+  local script_body=""
+
+  script_body="$(curl -fsSL --connect-timeout 5 --max-time 30 "${XRAY_INSTALL_URL}" 2>/dev/null || true)"
+  [[ -n "${script_body}" ]] || return 1
+
+  bash -c "${script_body}" @ install -u "${install_user}" || return 1
+  if ! bash -c "${script_body}" @ install-geodata; then
+    warn "官方 geodata 安装失败，尝试直链更新 geodata。"
+    install_xray_geodata_direct || return 1
+  fi
 }
 
 install_xray() {
   local install_user
 
   log "安装或更新 Xray 最新稳定版..."
-  install_user="$(desired_xray_install_user)"
-  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install -u "${install_user}"
-  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install-geodata
+  install_user="$(resolve_xray_install_user)"
+
+  if ! install_xray_via_official_script "${install_user}"; then
+    warn "官方安装链路不可用，改为直链安装 Xray Core。"
+    install_xray_direct "${install_user}"
+  fi
 
   resolve_xray_bin
 
@@ -325,8 +625,12 @@ xray_latest_version() {
     version="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"${response}" | head -n 1)"
   fi
 
-  [[ -n "${version}" && "${version}" != "null" ]] || return 1
-  printf '%s\n' "${version}"
+  if [[ -n "${version}" && "${version}" != "null" ]]; then
+    printf '%s\n' "${version}"
+    return 0
+  fi
+
+  xray_latest_version_from_redirect
 }
 
 normalize_xray_version() {
@@ -387,8 +691,6 @@ xray_update_status_text() {
 }
 
 update_xray_core() {
-  local install_user
-
   need_root
   check_system
 
@@ -404,13 +706,10 @@ update_xray_core() {
   elif [[ "${xray_update_state_cache}" == "not-installed" ]]; then
     confirm "未检测到 Xray，是否安装最新稳定版 Xray Core" "y" || die "已取消。"
   else
-    confirm "无法确认最新版本，是否仍然执行官方安装脚本更新 Xray Core" "n" || die "已取消。"
+    confirm "无法确认最新版本，是否仍然继续更新 Xray Core" "n" || die "已取消。"
   fi
 
-  install_user="$(desired_xray_install_user)"
-  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install -u "${install_user}"
-  bash -c "$(curl -fsSL "${XRAY_INSTALL_URL}")" @ install-geodata
-  resolve_xray_bin
+  install_xray
 
   if [[ -s "${CONFIG_FILE}" ]]; then
     test_xray_config "${CONFIG_FILE}"
