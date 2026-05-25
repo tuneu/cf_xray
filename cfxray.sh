@@ -767,6 +767,56 @@ ask_port() {
   done
 }
 
+generate_random_port() {
+  local port
+  local attempts=0
+
+  while (( attempts < 64 )); do
+    port=$((1000 + (((RANDOM << 15) | RANDOM) % 64536)))
+    if ! port_in_use "${port}"; then
+      printf '%s' "${port}"
+      return
+    fi
+    attempts=$((attempts + 1))
+  done
+
+  die "无法生成可用的随机端口，请稍后重试。"
+}
+
+ask_port_with_random_default() {
+  local label="$1"
+  local value
+  local prompt_label="${label}"
+  local prompt_text
+
+  [[ "${prompt_label}" == *"端口"* ]] || prompt_label="${prompt_label}端口"
+
+  while true; do
+    prompt_text="$(printf '%b%s%b %b[回车随机端口]%b: ' "${cyan}" "${prompt_label}" "${plain}" "${dim}" "${plain}")"
+    read -r -p "${prompt_text}" value
+
+    if [[ -z "${value}" ]]; then
+      value="$(generate_random_port)"
+      ui_note "已随机生成端口：${value}"
+    fi
+
+    if ! validate_port_number "${value}"; then
+      warn "端口必须是 1-65535 的数字。"
+      continue
+    fi
+
+    if port_in_use "${value}"; then
+      warn "端口 ${value} 当前已被监听。"
+      if ! confirm "仍然继续使用这个端口吗" "n"; then
+        continue
+      fi
+    fi
+
+    printf '%s' "${value}"
+    return
+  done
+}
+
 is_cloudflare_ws_tls_port() {
   local port="$1"
   local candidate
@@ -1244,13 +1294,16 @@ configure_certificate() {
 select_protocols() {
   local selected
   local item
+  local prompt_text
 
   ui_section "选择节点类型"
   ui_note "多个选项可用逗号或空格分隔，例如 1,3。"
   ui_option "1" "VLESS WS TLS" "经 Cloudflare CDN 回源"
   ui_option "2" "VMess WS TLS" "经 Cloudflare CDN 回源"
   ui_option "3" "VLESS Reality Vision" "直连 TCP，不走 CDN"
-  selected="$(prompt "选择" "1,2,3")"
+  prompt_text="$(printf '%b%s%b: ' "${cyan}" "选择 [1,2,3，回车默认1,3]" "${plain}")"
+  read -r -p "${prompt_text}" selected
+  selected="${selected:-1,3}"
 
   selected="${selected//,/ }"
   for item in ${selected}; do
@@ -1367,7 +1420,7 @@ collect_ws_settings() {
 
     if (( vless_ws_enabled )); then
       ui_group "VLESS WS TLS"
-      vless_ws_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "8443")"
+      vless_ws_port="$(ask_port_with_random_default "连接到服务器的端口，也就是重写到的端口")"
       vless_ws_public_port="${ws_client_port}"
       default_path="${vless_ws_path:-$(generate_random_ws_path vless)}"
       vless_ws_path="$(ask_ws_path "VLESS" "${default_path}")"
@@ -1377,7 +1430,7 @@ collect_ws_settings() {
 
     if (( vmess_ws_enabled )); then
       ui_group "VMess WS TLS"
-      vmess_ws_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "2096")"
+      vmess_ws_port="$(ask_port_with_random_default "连接到服务器的端口，也就是重写到的端口")"
       vmess_ws_public_port="${ws_client_port}"
       default_path="${vmess_ws_path:-$(generate_random_ws_path vmess)}"
       vmess_ws_path="$(ask_ws_path "VMess" "${default_path}")"
