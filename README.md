@@ -174,9 +174,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh
 
 ![1](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/1.png)
 
-下面我使用 VLESS + WebSocket + TLS 这一个来做例子
+输入 `1` 回车
 
 ![2](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/2.png)
+
+下面我使用 VLESS + WebSocket + TLS 这一个来做例子
+
+其实不套TLS也能用，但是有CF的证书白嫖，套了TLS怎么说都安全些，本脚本就只做了套TLS的
+
+
 
 UUID 可以直接回车，使用默认值是自动生成的
 
@@ -396,4 +402,4 @@ CM IPv6全端口回源：https://www.youtube.com/watch?v=S1Ilq69teVI
 
 CM 博客https://cmliussss.com/p/CM19
 
-甬哥影片里的第二个方案，也有其他的可以学习：https://www.youtube.com/watch?v=RnUT1CNbCr8 
+本教程类似于甬哥影片里的第二个方案，也有其他的方案可以学习：https://www.youtube.com/watch?v=RnUT1CNbCr8 
