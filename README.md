@@ -172,23 +172,23 @@ bash <(wget -qO- https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
 bash <(curl -fsSL https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
 ```
 
-![1](./assets/1.png)
+![1](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/1.png)
 
 下面我使用 VLESS + WebSocket + TLS 这一个来做例子
 
-![2](./assets/2.png)
+![2](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/2.png)
 
 UUID 可以直接回车，使用默认值是自动生成的
 
 
 
-![3](./assets/3.png)
+![3](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/3.png)
 
 填写托管到 CF, 并且解析到此服务器 IP 的域名
 
 
 
-![4](./assets/4.png)
+![4](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/4.png)
 
 填写你的优选域名/IP了。（可以理解为，这个就是中转的域名/ IP）
 
@@ -196,7 +196,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 
 
-![5](./assets/5.png)
+![5](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/5.png)
 
 填写我们客户端连接中转服务器的端口，可以填写这里列出来的所有值，默认为443。
 
@@ -204,7 +204,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 
 
-![6](./assets/6.png)
+![6](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/6.png)
 
 这一个填写的端口，就是你服务器的 Xray 实际监听的端口。也就是说，如果你用直连的话，是直接使用这一个端口。如果我们服务器有`443`、`8443`、`2053`、`2083`、`2087`、`2096`这一些端口可以使用的话，上面那一个端口和这一个端口可以写同一个，就不用进行回源操作了。
 
@@ -218,7 +218,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 无论你是填写现有证书路径还是直接粘贴 PEM，脚本都会把 `WS + TLS` 证书统一收拢到 `/usr/local/etc/xray/certs/`，并在重建配置时按 Xray 实际运行用户校正证书与日志目录权限。
 
-![7](./assets/7.png)
+![7](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/7.png)
 
 我更推荐使用第一个方式，粘贴证书内容。也就是我们之前生存的保存好的15年证书
 
@@ -228,7 +228,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 - 带字面 `\n` 的单行 PEM。
 - 把 BEGIN、正文、END 放在一行的 PEM
 
-![8](./assets/8.png)
+![8](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/8.png)
 
 ```text
 -----BEGIN CERTIFICATE-----
@@ -238,7 +238,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 按回车进行下一步 填写密钥
 
-![9](./assets/9.png)
+![9](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/9.png)
 
 ```text
 -----BEGIN PRIVATE KEY-----
@@ -253,7 +253,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 # CF回源
 
-![6](./assets/6.png)
+![6](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/6.png)
 
 过当时填写这一步填写的是其他随机端口的话，还需要去 C F 进行回源操作。
 
@@ -261,27 +261,27 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 左侧 `规则` -- `概述`-- `Origin Rules`(`源服务器规则`、`更改端口`) 这个东西名字太多了，下面给一些图片
 
-<img src="/Users/tune/Downloads/x-ui/cloudflare-xray-node/assets/10.png" alt="10" style="zoom:50%;" />
+<img src="https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/10.png" alt="10" style="zoom:50%;" />
 
-<img src="/Users/tune/Downloads/x-ui/cloudflare-xray-node/assets/11.png" alt="11" style="zoom:50%;" />
+<img src="https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/11.png" alt="11" style="zoom:50%;" />
 
 点击`创建规则`进去，规则名称自定义，能记住就好
 
 `自定义筛选表达式` --  字段为 `主机名` -- `运算符`为等于 -- 值 就是你之前解析你服务器的IP的域名，也就是前面你在下面填写的这个域名
 
-![3](./assets/3.png)
+![3](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/3.png)
 
 再点击 `And` --字段为 `SSL/HTTPS` -- `开启`
 
 `目标端口`-- `重写到` --这里的端口就填写，之前这一步的端口，这也就是回源的操作
 
-![6](./assets/6.png)
+![6](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/6.png)
 
 再次点击部署就完成了
 
 附上此页面的完整图片
 
-<img src="./assets/12.png" alt="12" style="zoom:50%;" />
+<img src="https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/12.png" alt="12" style="zoom:50%;" />
 
 这下就完成了，不过既然有免费的中转使用了，为什么不多弄几个呢，来进行负载均衡
 
@@ -297,7 +297,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 添加`脚本操作`
 
-![13](./assets/13.png)
+![13](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/13.png)
 
 选择`本地内容` ，清空里面的内容
 
@@ -397,4 +397,3 @@ CM IPv6全端口回源：https://www.youtube.com/watch?v=S1Ilq69teVI
 CM 博客https://cmliussss.com/p/CM19
 
 甬哥影片里的第二个方案，也有其他的可以学习：https://www.youtube.com/watch?v=RnUT1CNbCr8 
-
