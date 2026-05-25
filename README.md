@@ -26,9 +26,15 @@ WS+TLS 节点用于配合 Cloudflare CDN 回源；Reality 节点是直连 TCP，
 把脚本放到 VPS 后执行：
 
 ```bash
-chmod +x cfxray.sh
-sudo ./cfxray.sh
+bash <(wget -qO- https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
 ```
+
+或者 `curl`
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
+```
+
+
 
 也可以直接执行子命令：
 
@@ -155,6 +161,16 @@ Reality 不走 Cloudflare CDN。客户端需要使用脚本输出链接里的公
 # 部署节点
 
 ## 安装脚本
+
+```bash
+bash <(wget -qO- https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
+```
+
+或者 `curl`
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/tuneu/cf_xray/main/cfxray.sh)
+```
 
 ![1](./assets/1.png)
 
@@ -287,6 +303,8 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 复制我们下面链接的文本，粘贴进去
 
+https://raw.githubusercontent.com/tuneu/cf_xray/main/substore_cf.js
+
 ## 节点裂变脚本说明
 
 脚本顶部是用来填写参数的
@@ -378,5 +396,5 @@ CM IPv6全端口回源：https://www.youtube.com/watch?v=S1Ilq69teVI
 
 CM 博客https://cmliussss.com/p/CM19
 
-甬哥次影片里的第二个方案，也有其他的可以学习：https://www.youtube.com/watch?v=RnUT1CNbCr8 
+甬哥影片里的第二个方案，也有其他的可以学习：https://www.youtube.com/watch?v=RnUT1CNbCr8 
 
