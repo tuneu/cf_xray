@@ -7,10 +7,13 @@ const CONFIG = {
 
   // Optional: fetch target list from URLs. Each line: host[:port]#alias
   urls: [
-    'https://eg1.com/',
-    'https://eg2.com/',
+    'https://cf.090227.xyz/cu',
+    'https://cf.090227.xyz/ct?ips=6',
+    'https://www.wetest.vip/page/cloudflare/address_v4.html',
   ],
+
   urlTimeout: 5000,
+  wetestOperators: ['电信', '联通'],
 };
 
 var SUPERSCRIPT_DIGITS = [
@@ -40,17 +43,19 @@ function parsePort(raw, ctx) {
 }
 
 function splitHostPort(endpoint) {
-  // IPv6: [::1]:443
-  if (endpoint.charCodeAt(0) === 0x5b /* '[' */) {
+  if (endpoint.charCodeAt(0) === 0x5b) {
     var m = endpoint.match(IPV6_RE);
     if (!m) throw new Error('invalid IPv6: ' + endpoint);
     return { host: m[1], port: m[2] ? parsePort(m[2], endpoint) : undefined };
   }
+
   var i = endpoint.indexOf(':');
   if (i === -1) return { host: endpoint, port: undefined };
+
   if (endpoint.indexOf(':', i + 1) !== -1) {
     return { host: endpoint, port: undefined };
   }
+
   return {
     host: endpoint.slice(0, i).trim(),
     port: parsePort(endpoint.slice(i + 1), endpoint),
@@ -60,26 +65,84 @@ function splitHostPort(endpoint) {
 function parseTargetLine(line) {
   var i = line.indexOf('#');
   if (i === -1) throw new Error('bad format: ' + line + ' (expect host[:port]#alias)');
+
   var endpoint = line.slice(0, i).trim();
   var alias = line.slice(i + 1).trim();
+
   if (!endpoint) throw new Error('missing host: ' + line);
   if (!alias) throw new Error('missing alias: ' + line);
+
   var hp = splitHostPort(endpoint);
   return { host: hp.host, port: hp.port, alias: alias };
 }
 
-function parseTargetText(text) {
+function stripHtml(s) {
+  return String(s || '').replace(/<.*?>/g, '').trim();
+}
+
+function parseWetestCloudflareText(text) {
   var out = [];
-  var lines = String(text).split(LF);
+  var html = String(text || '');
+  var rowRe = /<tr[\s\S]*?<\/tr>/g;
+  var cellRe = /<td data-label="线路名称">([\s\S]*?)<\/td>[\s\S]*?<td data-label="优选地址">([\d.:a-fA-F]+)<\/td>[\s\S]*?<td data-label="数据中心">([\s\S]*?)<\/td>/;
+
+  var operators = Array.isArray(CONFIG.wetestOperators)
+    ? CONFIG.wetestOperators
+    : ['电信', '联通'];
+
+  var m;
+  while ((m = rowRe.exec(html)) !== null) {
+    var row = m[0];
+    var cells = row.match(cellRe);
+    if (!cells) continue;
+
+    var isp = stripHtml(cells[1]);
+    var ip = String(cells[2] || '').trim();
+    var colo = stripHtml(cells[3]);
+
+    if (!ip) continue;
+
+    var matched = false;
+    for (var i = 0; i < operators.length; i++) {
+      if (isp.indexOf(operators[i]) !== -1) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) continue;
+
+    out.push({
+      host: ip,
+      port: undefined,
+      alias: 'CF优选-' + isp + (colo ? '-' + colo : ''),
+    });
+  }
+
+  return out;
+}
+
+function parseTargetText(text) {
+  var raw = String(text || '');
+
+  if (raw.indexOf('data-label="线路名称"') !== -1 &&
+      raw.indexOf('data-label="优选地址"') !== -1) {
+    return parseWetestCloudflareText(raw);
+  }
+
+  var out = [];
+  var lines = raw.split(LF);
+
   for (var k = 0; k < lines.length; k++) {
-    var line = lines[k].trim(); // trim drops the trailing \r as well
+    var line = lines[k].trim();
     if (!line) continue;
     if (line.charAt(0) === '#') continue;
     if (line.indexOf('#') === -1) continue;
+
     try {
       out.push(parseTargetLine(line));
-    } catch (_) { /* skip bad line */ }
+    } catch (_) {}
   }
+
   return out;
 }
 
@@ -98,6 +161,7 @@ if (!STATIC_TARGETS.length && !HAS_URLS) {
 
 function injectAlias(name, alias) {
   if (!name) return alias;
+
   var i = name.indexOf('_');
   return i === -1
     ? name + '-' + alias
@@ -106,29 +170,39 @@ function injectAlias(name, alias) {
 
 function cloneWithTarget(proxy, target) {
   var c = deepClone(proxy);
+
   c.server = target.host;
   if (target.port !== undefined) c.port = target.port;
   c.name = injectAlias(proxy.name, target.alias);
+
   return c;
 }
 
 function dedupAliases(targets) {
   var counts = new Map();
+
   for (var i = 0; i < targets.length; i++) {
     var a = targets[i].alias;
     counts.set(a, (counts.get(a) || 0) + 1);
   }
+
   var idx = new Map();
+
   return targets.map(function (t) {
     if ((counts.get(t.alias) || 0) <= 1) return t;
+
     var j = idx.get(t.alias) || 0;
     idx.set(t.alias, j + 1);
-    return { host: t.host, port: t.port, alias: t.alias + toSuperscript(j) };
+
+    return {
+      host: t.host,
+      port: t.port,
+      alias: t.alias + toSuperscript(j),
+    };
   });
 }
 
 async function httpGetText(url) {
-  // Sub-Store provides $substore; some setups also expose $.
   var $api =
     (typeof $substore !== 'undefined' && $substore) ? $substore :
     (typeof $ !== 'undefined' && $) ? $ : null;
@@ -141,10 +215,12 @@ async function httpGetText(url) {
     if (res.rawBody !== undefined) return res.rawBody;
     return '';
   }
+
   if (typeof fetch === 'function') {
     var r = await fetch(url);
     return await r.text();
   }
+
   throw new Error('no HTTP client available in this runtime');
 }
 
@@ -160,10 +236,15 @@ async function fetchTargetsFromUrls(urls) {
       return [];
     }
   }));
+
   var result = [];
+
   for (var i = 0; i < list.length; i++) {
-    for (var j = 0; j < list[i].length; j++) result.push(list[i][j]);
+    for (var j = 0; j < list[i].length; j++) {
+      result.push(list[i][j]);
+    }
   }
+
   return result;
 }
 
@@ -172,12 +253,16 @@ async function operator(proxies, targetPlatform, context) {
   if (!Array.isArray(proxies)) return proxies;
 
   var targets = STATIC_TARGETS.slice();
+
   var urls = (Array.isArray(CONFIG.urls) ? CONFIG.urls : [])
     .map(function (u) { return String(u || '').trim(); })
     .filter(Boolean);
+
   if (urls.length) {
     var fetched = await fetchTargetsFromUrls(urls);
-    for (var i = 0; i < fetched.length; i++) targets.push(fetched[i]);
+    for (var i = 0; i < fetched.length; i++) {
+      targets.push(fetched[i]);
+    }
   }
 
   if (!targets.length) return proxies;
@@ -191,11 +276,14 @@ async function operator(proxies, targetPlatform, context) {
 
   for (var p = 0; p < proxies.length; p++) {
     var proxy = proxies[p];
+
     if (!proxy || !proxy.server) {
       output[n++] = proxy;
       continue;
     }
+
     if (keep) output[n++] = proxy;
+
     for (var t = 0; t < targets.length; t++) {
       output[n++] = cloneWithTarget(proxy, targets[t]);
     }
