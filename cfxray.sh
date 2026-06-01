@@ -37,6 +37,7 @@ ws_client_port=443
 show_qr_in_links=1
 vless_ws_enabled=0
 vmess_ws_enabled=0
+vless_xhttp_enabled=0
 reality_enabled=0
 
 vless_ws_port=8443
@@ -50,6 +51,12 @@ vmess_ws_public_port=""
 vmess_ws_path=""
 vmess_ws_host=""
 vmess_ws_tag=""
+
+vless_xhttp_port=2083
+vless_xhttp_public_port=""
+vless_xhttp_path=""
+vless_xhttp_host=""
+vless_xhttp_tag=""
 
 reality_port=443
 reality_addr=""
@@ -887,12 +894,12 @@ ask_ws_path() {
   local value
 
   while true; do
-    value="$(normalize_ws_path "$(prompt "${label} WS Path，回车使用随机路径" "${default}")")"
+    value="$(normalize_ws_path "$(prompt "${label} Path，回车使用随机路径" "${default}")")"
     if validate_ws_path "${value}"; then
       printf '%s' "${value}"
       return
     fi
-    warn "WS Path 必须以 / 开头，不能只填 /，也不能包含空白字符。"
+    warn "Path 必须以 / 开头，不能只填 /，也不能包含空白字符。"
   done
 }
 
@@ -1258,7 +1265,7 @@ configure_certificate() {
 
   mkdir -p "${CERT_DIR}"
   ui_section "证书配置"
-  ui_note "WS+TLS 节点需要证书和私钥；脚本会统一保存到 ${CERT_DIR}。"
+  ui_note "CDN TLS 节点需要证书和私钥；脚本会统一保存到 ${CERT_DIR}。"
   ui_option "1" "粘贴 PEM 内容" "适合 Cloudflare Origin Certificate"
   ui_option "2" "填写文件路径" "使用服务器上已有证书文件"
 
@@ -1298,24 +1305,26 @@ select_protocols() {
 
   ui_section "选择节点类型"
   ui_note "多个选项可用逗号或空格分隔，例如 1,3。"
-  ui_option "1" "VLESS WS TLS" "经 Cloudflare CDN 回源"
-  ui_option "2" "VMess WS TLS" "经 Cloudflare CDN 回源"
-  ui_option "3" "VLESS Reality Vision" "直连 TCP，不走 CDN"
-  prompt_text="$(printf '%b%s%b: ' "${cyan}" "选择 [1,2,3，回车默认1,3]" "${plain}")"
+  ui_option "1" "VLESS XHTTP TLS" "经 Cloudflare CDN 回源"
+  ui_option "2" "VLESS WS TLS" "经 Cloudflare CDN 回源"
+  ui_option "3" "VMess WS TLS" "经 Cloudflare CDN 回源"
+  ui_option "4" "VLESS Reality Vision" "直连 TCP，不走 CDN"
+  prompt_text="$(printf '%b%s%b: ' "${cyan}" "选择 [1,2,3,4，回车默认2,4]" "${plain}")"
   read -r -p "${prompt_text}" selected
-  selected="${selected:-1,3}"
+  selected="${selected:-2,4}"
 
   selected="${selected//,/ }"
   for item in ${selected}; do
     case "${item}" in
-      1) vless_ws_enabled=1 ;;
-      2) vmess_ws_enabled=1 ;;
-      3) reality_enabled=1 ;;
+      1) vless_xhttp_enabled=1 ;;
+      2) vless_ws_enabled=1 ;;
+      3) vmess_ws_enabled=1 ;;
+      4) reality_enabled=1 ;;
       *) die "未知选项：${item}" ;;
     esac
   done
 
-  (( vless_ws_enabled || vmess_ws_enabled || reality_enabled )) || die "至少需要选择一个节点。"
+  (( vless_ws_enabled || vmess_ws_enabled || vless_xhttp_enabled || reality_enabled )) || die "至少需要选择一个节点。"
 }
 
 detect_public_ip() {
@@ -1410,8 +1419,8 @@ collect_ws_settings() {
   local default_path
   local cert_label
 
-  if (( vless_ws_enabled || vmess_ws_enabled )); then
-    ui_section "WebSocket + TLS"
+  if (( vless_ws_enabled || vmess_ws_enabled || vless_xhttp_enabled )); then
+    ui_section "CDN TLS 节点"
     ui_note "用于 Cloudflare CDN 回源。domain/Host/SNI 通常填写已接入 Cloudflare 的域名。"
     ui_note "客户端公开端口会写入分享链接；源站监听端口用于 Xray inbound。"
     ws_domain="$(ask_domain "请输入已接入 Cloudflare 的域名" "${ws_domain}")"
@@ -1426,6 +1435,16 @@ collect_ws_settings() {
       vless_ws_path="$(ask_ws_path "VLESS" "${default_path}")"
       vless_ws_host="$(ask_domain "VLESS WS Host/SNI" "${ws_domain}")"
       vless_ws_tag="vless-ws-tls-${vless_ws_port}"
+    fi
+
+    if (( vless_xhttp_enabled )); then
+      ui_group "VLESS XHTTP TLS"
+      vless_xhttp_port="$(ask_port_with_random_default "连接到服务器的端口，也就是重写到的端口")"
+      vless_xhttp_public_port="${ws_client_port}"
+      default_path="${vless_xhttp_path:-$(generate_random_ws_path xhttp)}"
+      vless_xhttp_path="$(ask_ws_path "VLESS XHTTP" "${default_path}")"
+      vless_xhttp_host="$(ask_domain "VLESS XHTTP Host/SNI" "${ws_domain}")"
+      vless_xhttp_tag="vless-xhttp-tls-${vless_xhttp_port}"
     fi
 
     if (( vmess_ws_enabled )); then
@@ -1542,7 +1561,7 @@ load_state_globals() {
   uuid="$(jq -r '.uuid // ""' "${STATE_FILE}")"
   ws_domain="$(jq -r '.ws.domain // ""' "${STATE_FILE}")"
   ws_client_addr="$(jq -r '.ws.client_addr // ""' "${STATE_FILE}")"
-  ws_client_port="$(jq -r '(.ws.client_port // ([.nodes[]? | select(.type == "vless-ws-tls" or .type == "vmess-ws-tls") | (.public_port // .port)] | first) // 443)' "${STATE_FILE}")"
+  ws_client_port="$(jq -r '(.ws.client_port // ([.nodes[]? | select(.type == "vless-ws-tls" or .type == "vmess-ws-tls" or .type == "vless-xhttp-tls") | (.public_port // .port)] | first) // 443)' "${STATE_FILE}")"
   ws_cert_file="$(jq -r '.ws.certificate_file // ""' "${STATE_FILE}")"
   ws_key_file="$(jq -r '.ws.key_file // ""' "${STATE_FILE}")"
 }
@@ -1577,7 +1596,7 @@ sync_ws_public_port_in_state() {
   jq --argjson client_port "${ws_client_port}" '
     .ws.client_port = $client_port
     | .nodes |= map(
-        if .type == "vless-ws-tls" or .type == "vmess-ws-tls" then
+        if .type == "vless-ws-tls" or .type == "vmess-ws-tls" or .type == "vless-xhttp-tls" then
           .public_port = $client_port
         else
           .
@@ -1658,6 +1677,25 @@ vmess_ws_node_json() {
     }'
 }
 
+vless_xhttp_node_json() {
+  jq -n \
+    --arg tag "${vless_xhttp_tag}" \
+    --arg uuid "${uuid}" \
+    --argjson port "${vless_xhttp_port}" \
+    --argjson public_port "${vless_xhttp_public_port:-$vless_xhttp_port}" \
+    --arg path "${vless_xhttp_path}" \
+    --arg host "${vless_xhttp_host}" \
+    '{
+      tag: $tag,
+      type: "vless-xhttp-tls",
+      port: $port,
+      public_port: $public_port,
+      path: $path,
+      host: $host,
+      uuid: $uuid
+    }'
+}
+
 reality_node_json() {
   jq -n \
     --arg tag "${reality_tag}" \
@@ -1698,6 +1736,11 @@ append_selected_nodes_to_state() {
     append_node_json_to_state "$(vmess_ws_node_json)"
   fi
 
+  if (( vless_xhttp_enabled )); then
+    vless_xhttp_tag="$(make_unique_tag "vless-xhttp-tls-${vless_xhttp_port}")"
+    append_node_json_to_state "$(vless_xhttp_node_json)"
+  fi
+
   if (( reality_enabled )); then
     reality_tag="$(make_unique_tag "vless-reality-vision-${reality_port}")"
     append_node_json_to_state "$(reality_node_json)"
@@ -1707,7 +1750,7 @@ append_selected_nodes_to_state() {
 validate_state_for_rebuild() {
   ensure_state
   load_state_globals
-  if jq -e '.nodes[]? | select(.type == "vless-ws-tls" or .type == "vmess-ws-tls")' "${STATE_FILE}" >/dev/null; then
+  if jq -e '.nodes[]? | select(.type == "vless-ws-tls" or .type == "vmess-ws-tls" or .type == "vless-xhttp-tls")' "${STATE_FILE}" >/dev/null; then
     validate_cert_pair "${ws_cert_file}" "${ws_key_file}"
     if ! is_managed_cert_path "${ws_cert_file}" || ! is_managed_cert_path "${ws_key_file}"; then
       ensure_managed_ws_cert_pair "${ws_cert_file}" "${ws_key_file}"
@@ -1805,6 +1848,35 @@ build_config_from_state_to_file() {
           },
           sniffing: sniffing
         };
+      def vless_xhttp($node):
+        {
+          listen: "0.0.0.0",
+          port: $node.port,
+          protocol: "vless",
+          tag: $node.tag,
+          settings: {
+            clients: [{ id: $node.uuid, email: $node.tag }],
+            decryption: "none"
+          },
+          streamSettings: {
+            network: "xhttp",
+            security: "tls",
+            tlsSettings: {
+              rejectUnknownSni: false,
+              minVersion: "1.2",
+              alpn: ["h2", "http/1.1"],
+              certificates: [{
+                certificateFile: $state.ws.certificate_file,
+                keyFile: $state.ws.key_file,
+                ocspStapling: 3600
+              }]
+            },
+            xhttpSettings: {
+              path: $node.path
+            }
+          },
+          sniffing: sniffing
+        };
       def reality($node):
         {
           listen: "0.0.0.0",
@@ -1839,6 +1911,7 @@ build_config_from_state_to_file() {
           $state.nodes[]
           | if .type == "vless-ws-tls" then vless_ws(.)
             elif .type == "vmess-ws-tls" then vmess_ws(.)
+            elif .type == "vless-xhttp-tls" then vless_xhttp(.)
             elif .type == "vless-reality-vision" then reality(.)
             else empty
             end
@@ -1936,6 +2009,9 @@ node_display_name_from_json() {
     vmess-ws-tls)
       printf 'vm_%s' "${host_value}"
       ;;
+    vless-xhttp-tls)
+      printf 'xhttp_%s' "${host_value}"
+      ;;
     vless-reality-vision)
       printf 'real_%s' "${host_value}"
       ;;
@@ -2007,6 +2083,21 @@ write_links_from_state() {
           --arg ps "${display_name}" \
           '{v:"2",ps:$ps,add:$add,port:$port,id:$id,aid:"0",scy:"auto",net:"ws",type:"none",host:$host,path:$path,tls:"tls",sni:$host}')"
         link="vmess://$(printf '%s' "${vmess_json}" | base64_one_line)"
+        {
+          echo "---------- ${display_name} ----------"
+          echo "${link}"
+          append_qr "${link}"
+          echo
+        } >>"${LINKS_FILE}"
+        ;;
+      vless-xhttp-tls)
+        addr="$(format_address_for_url "$(jq -r '.ws.client_addr // .ws.domain // ""' "${STATE_FILE}")")"
+        port="$(jq -r '.public_port // .port' <<<"${node_json}")"
+        host="$(jq -r '.host' <<<"${node_json}")"
+        path="$(jq -r '.path' <<<"${node_json}")"
+        path_encoded="$(urlencode "${path}")"
+        tag_encoded="$(urlencode "${display_name}")"
+        link="vless://${node_uuid}@${addr}:${port}?encryption=none&type=xhttp&security=tls&sni=${host}&host=${host}&path=${path_encoded}&alpn=h2,http/1.1#${tag_encoded}"
         {
           echo "---------- ${display_name} ----------"
           echo "${link}"
@@ -2112,6 +2203,9 @@ node_type_label() {
     vmess-ws-tls)
       printf 'VMess WS TLS'
       ;;
+    vless-xhttp-tls)
+      printf 'VLESS XHTTP TLS'
+      ;;
     vless-reality-vision)
       printf 'Reality Vision'
       ;;
@@ -2134,7 +2228,7 @@ print_state_summary() {
 
   if (( count > 0 )); then
     ui_section "Cloudflare 提醒"
-    ui_note "WS+TLS 节点用于 Cloudflare 代理；Reality 节点是直连 TCP，不走 CDN。"
+    ui_note "WS/XHTTP TLS 节点用于 Cloudflare 代理；Reality 节点是直连 TCP，不走 CDN。"
     ui_note "Cloudflare HTTPS 标准端口：443、2053、2083、2087、2096、8443。"
     ui_note "listen 是源站实际监听端口；public 是分享链接里的客户端公开端口。"
     ui_note "当 public 与 listen 不一致时，请确认 Origin Rule 或前置代理已完成回源映射。"
@@ -2149,6 +2243,7 @@ print_state_summary() {
 reset_selection_flags() {
   vless_ws_enabled=0
   vmess_ws_enabled=0
+  vless_xhttp_enabled=0
   reality_enabled=0
   ws_client_port=443
   vless_ws_port=8443
@@ -2161,6 +2256,11 @@ reset_selection_flags() {
   vmess_ws_path=""
   vmess_ws_host=""
   vmess_ws_tag=""
+  vless_xhttp_port=2083
+  vless_xhttp_public_port=""
+  vless_xhttp_path=""
+  vless_xhttp_host=""
+  vless_xhttp_tag=""
   reality_port=443
   reality_addr=""
   reality_target="apple.com"
@@ -2210,7 +2310,7 @@ list_nodes() {
     type_label="$(node_type_label "${type}")"
 
     case "${type}" in
-      vless-ws-tls|vmess-ws-tls)
+      vless-ws-tls|vmess-ws-tls|vless-xhttp-tls)
         port="$(jq -r '.port' <<<"${node_json}")"
         public_port="$(jq -r '.public_port // .port' <<<"${node_json}")"
         host="$(jq -r '.host' <<<"${node_json}")"
@@ -2261,6 +2361,8 @@ select_node_index() {
             "vl_" + $server_name
           elif $node.type == "vmess-ws-tls" then
             "vm_" + $server_name
+          elif $node.type == "vless-xhttp-tls" then
+            "xhttp_" + $server_name
           elif $node.type == "vless-reality-vision" then
             "real_" + $server_name
           else
@@ -2281,7 +2383,7 @@ select_node_index() {
 
 prompt_existing_or_new_ws_metadata() {
   if [[ -n "${ws_domain}" && -n "${ws_cert_file}" && -n "${ws_key_file}" ]]; then
-    if confirm "继续使用当前 WS 域名和证书配置吗" "y"; then
+    if confirm "继续使用当前 CDN TLS 域名和证书配置吗" "y"; then
       validate_cert_pair "${ws_cert_file}" "${ws_key_file}"
       return
     fi
@@ -2353,7 +2455,7 @@ cmd_add() {
   reset_selection_flags
   load_state_globals
   select_protocols
-  if (( vless_ws_enabled || vmess_ws_enabled )); then
+  if (( vless_ws_enabled || vmess_ws_enabled || vless_xhttp_enabled )); then
     prompt_existing_or_new_ws_metadata
   fi
   collect_ws_settings
@@ -2389,15 +2491,20 @@ modify_ws_node() {
   current_public_port="$(jq -r --argjson index "${index}" '.nodes[$index].public_port // .nodes[$index].port' "${STATE_FILE}")"
   current_path="$(jq -r --argjson index "${index}" '.nodes[$index].path' "${STATE_FILE}")"
   current_host="$(jq -r --argjson index "${index}" '.nodes[$index].host' "${STATE_FILE}")"
-  [[ "${type}" == "vless-ws-tls" ]] && label="VLESS" || label="VMess"
+  case "${type}" in
+    vless-ws-tls) label="VLESS WS" ;;
+    vmess-ws-tls) label="VMess WS" ;;
+    vless-xhttp-tls) label="VLESS XHTTP" ;;
+    *) label="${type}" ;;
+  esac
 
-  ui_section "修改 ${label} WS TLS"
+  ui_section "修改 ${label} TLS"
   new_port="$(ask_port "连接到服务器的端口，也就是重写到的端口" "${current_port}")"
   new_public_port="${current_public_port}"
   new_path="$(ask_ws_path "${label}" "${current_path}")"
   new_host="$(ask_domain "${label} Host/SNI" "${current_host}")"
 
-  if confirm "是否同时更新 WS 全局域名、客户端地址、客户端端口或证书" "n"; then
+  if confirm "是否同时更新 CDN TLS 全局域名、客户端地址、客户端端口或证书" "n"; then
     ws_domain="$(ask_domain "请输入已接入 Cloudflare 的域名" "${ws_domain}")"
     ws_client_addr="$(prompt "客户端连接地址，可填优选域名/IP" "${DEFAULT_WS_CLIENT_ADDR}")"
     ws_client_port="$(ask_ws_client_port "${ws_client_port:-443}")"
@@ -2486,7 +2593,7 @@ cmd_modify() {
   type="$(jq -r --argjson index "${index}" '.nodes[$index].type' "${STATE_FILE}")"
 
   case "${type}" in
-    vless-ws-tls|vmess-ws-tls)
+    vless-ws-tls|vmess-ws-tls|vless-xhttp-tls)
       modify_ws_node "${index}" "${type}"
       ;;
     vless-reality-vision)
@@ -2573,7 +2680,7 @@ Cloudflare Xray Node 管理脚本
   install     安装/更新 Xray，并重新初始化已管理节点
   update-xray 独立检查并更新 Xray Core，不重新初始化节点
   list        查看已安装节点
-  add         新增 VLESS WS TLS、VMess WS TLS 或 Reality 节点
+  add         新增 VLESS WS TLS、VMess WS TLS、VLESS XHTTP TLS 或 Reality 节点
   modify      修改已有节点配置
   delete-all  清空所有已管理节点（不卸载 Xray）并重建空配置
   links       重新生成并显示节点链接
@@ -2590,7 +2697,7 @@ show_menu() {
   ui_clear_screen
   while true; do
     count="$(menu_node_count)"
-    ui_title "Cloudflare Xray Node" "VLESS/VMess WS TLS + Reality Vision 管理脚本"
+    ui_title "Cloudflare Xray Node" "VLESS/VMess WS TLS + VLESS XHTTP TLS + Reality Vision 管理脚本"
     ui_kv "Xray 服务" "$(xray_service_status_text)"
     ui_kv "Xray 版本" "$(xray_update_status_text)"
     ui_kv "状态文件" "$(state_status_text)  ${STATE_FILE}"

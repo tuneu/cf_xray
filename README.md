@@ -6,9 +6,10 @@
 
 - VLESS + WebSocket + TLS
 - VMess + WebSocket + TLS
+- VLESS + XHTTP + TLS
 - VLESS + TCP + Reality + Vision
 
-WS+TLS 节点用于配合 Cloudflare CDN 回源；Reality 节点是直连 TCP，不适合套 Cloudflare CDN。
+WS/XHTTP TLS 节点用于配合 Cloudflare CDN 回源；Reality 节点是直连 TCP，不适合套 Cloudflare CDN。
 
 ## 支持范围
 
@@ -19,7 +20,7 @@ WS+TLS 节点用于配合 Cloudflare CDN 回源；Reality 节点是直连 TCP，
 安装时会优先调用官方 `XTLS/Xray-install`；如果 GitHub API 或官方安装链路不可用，会自动回退到 GitHub release 直链安装。
 节点状态保存在 `/etc/cloudflare-xray-node/state.json`，分享链接保存在 `/root/xray-node-links.txt`。
 
-无论你是填写现有证书路径还是直接粘贴 PEM，脚本都会把 `WS + TLS` 证书统一收拢到 `/usr/local/etc/xray/certs/`，并在重建配置时按 Xray 实际运行用户校正证书与日志目录权限。
+无论你是填写现有证书路径还是直接粘贴 PEM，脚本都会把 CDN TLS 节点证书统一收拢到 `/usr/local/etc/xray/certs/`，并在重建配置时按 Xray 实际运行用户校正证书与日志目录权限。
 
 ## 使用
 
@@ -56,7 +57,7 @@ sudo bash cloudflare-xray-node/cfxray.sh uninstall
 - `install`：安装或更新 Xray，并重新初始化本脚本管理的节点。
 - `update-xray`：独立检查并更新 Xray Core 和 geodata；不会重新初始化节点。
 - `list`：查看当前状态文件里的节点。
-- `add`：新增 VLESS WS TLS、VMess WS TLS 或 Reality 节点。
+- `add`：新增 VLESS WS TLS、VMess WS TLS、VLESS XHTTP TLS 或 Reality 节点。
 - `modify`：按编号或 tag 修改已有节点。
 - `delete-all`：清空所有已管理节点并重建空配置；不会删除证书文件。
 - `links`：重新生成并显示分享链接。
@@ -82,7 +83,7 @@ sudo bash cloudflare-xray-node/cfxray.sh uninstall
 
 ## 证书
 
-WS+TLS 节点支持两种证书输入：
+WS/XHTTP TLS 节点支持两种证书输入：
 
 - 填写已有证书和私钥路径
 - 粘贴 PEM 内容，由脚本保存到 `/usr/local/etc/xray/certs/`
@@ -222,7 +223,7 @@ UUID 可以直接回车，使用默认值是自动生成的
 
 ## 证书配置
 
-无论你是填写现有证书路径还是直接粘贴 PEM，脚本都会把 `WS + TLS` 证书统一收拢到 `/usr/local/etc/xray/certs/`，并在重建配置时按 Xray 实际运行用户校正证书与日志目录权限。
+无论你是填写现有证书路径还是直接粘贴 PEM，脚本都会把 CDN TLS 节点证书统一收拢到 `/usr/local/etc/xray/certs/`，并在重建配置时按 Xray 实际运行用户校正证书与日志目录权限。
 
 ![7](https://raw.githubusercontent.com/tuneu/cf_xray/main/assets/7.png)
 
@@ -351,8 +352,9 @@ const CONFIG = {
 
 - VLESS + WebSocket + TLS   --------> `vl_主机名`
 - VMess + WebSocket + TLS.  --------> `vm_主机名`
+- VLESS + XHTTP + TLS       --------> `xhttp_主机名`
 
-我们的别名是把井号的内容添加到 `vl`和 `主机名_`之间，并自动加一个 `-`
+我们的别名是把井号的内容添加到协议前缀和 `主机名_`之间，并自动加一个 `-`
 
 来举一个例子吧
 
