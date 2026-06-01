@@ -45,6 +45,7 @@ sudo bash cloudflare-xray-node/cfxray.sh update-xray
 sudo bash cloudflare-xray-node/cfxray.sh list
 sudo bash cloudflare-xray-node/cfxray.sh add
 sudo bash cloudflare-xray-node/cfxray.sh modify
+sudo bash cloudflare-xray-node/cfxray.sh delete
 sudo bash cloudflare-xray-node/cfxray.sh delete-all
 sudo bash cloudflare-xray-node/cfxray.sh links
 sudo bash cloudflare-xray-node/cfxray.sh restart
@@ -59,6 +60,7 @@ sudo bash cloudflare-xray-node/cfxray.sh uninstall
 - `list`：查看当前状态文件里的节点。
 - `add`：新增 VLESS WS TLS、VMess WS TLS、VLESS XHTTP TLS 或 Reality 节点。
 - `modify`：按编号或 tag 修改已有节点。
+- `delete`：按编号、名字或 tag 删除一个已管理节点，并重建配置；不会卸载 Xray。
 - `delete-all`：清空所有已管理节点并重建空配置；不会删除证书文件。
 - `links`：重新生成并显示分享链接。
 - `restart`：重启 Xray 服务。
@@ -78,7 +80,7 @@ sudo bash cloudflare-xray-node/cfxray.sh uninstall
 /etc/cloudflare-xray-node/state.json
 ```
 
-`install` 会重新初始化状态；`add`、`modify`、`delete-all` 会修改状态后重建 Xray 配置和分享链接。
+`install` 会重新初始化状态；`add`、`modify`、`delete`、`delete-all` 会修改状态后重建 Xray 配置和分享链接。
 重建配置前，脚本会先校验状态文件、证书/私钥是否存在且匹配，必要时把旧状态里的外部证书路径迁移到受控证书目录，然后执行 Xray 配置测试。
 
 ## 证书

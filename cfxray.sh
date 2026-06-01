@@ -1309,9 +1309,9 @@ select_protocols() {
   ui_option "2" "VLESS WS TLS" "经 Cloudflare CDN 回源"
   ui_option "3" "VMess WS TLS" "经 Cloudflare CDN 回源"
   ui_option "4" "VLESS Reality Vision" "直连 TCP，不走 CDN"
-  prompt_text="$(printf '%b%s%b: ' "${cyan}" "选择 [1,2,3,4，回车默认2,4]" "${plain}")"
+  prompt_text="$(printf '%b%s%b: ' "${cyan}" "选择 [1,2,3,4，回车默认1,4]" "${plain}")"
   read -r -p "${prompt_text}" selected
-  selected="${selected:-2,4}"
+  selected="${selected:-1,4}"
 
   selected="${selected//,/ }"
   for item in ${selected}; do
@@ -2610,6 +2610,34 @@ cmd_modify() {
   print_state_summary "修改节点完成"
 }
 
+cmd_delete() {
+  local index
+  local node_json
+  local node_name
+  local tmp_state
+
+  need_root
+  check_system
+  resolve_xray_bin
+  tmp_dir="$(mktemp -d)"
+  ensure_state
+  ui_title "删除节点" "选择一个已管理节点并重建 Xray 配置，不卸载 Xray。"
+  index="$(select_node_index)"
+  node_json="$(jq -c --argjson index "${index}" '.nodes[$index]' "${STATE_FILE}")"
+  node_name="$(node_display_name_from_json "${node_json}")"
+
+  confirm "确认删除节点 ${node_name}（不卸载 Xray）吗" "n" || die "已取消。"
+  tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
+  jq --argjson index "${index}" 'del(.nodes[$index])' "${STATE_FILE}" >"${tmp_state}"
+  chmod 600 "${tmp_state}" 2>/dev/null || true
+  mv "${tmp_state}" "${STATE_FILE}"
+
+  rebuild_config_from_state
+  restart_xray
+  write_links_from_state
+  print_state_summary "删除节点完成"
+}
+
 cmd_delete_all() {
   local tmp_state
 
@@ -2682,6 +2710,7 @@ Cloudflare Xray Node 管理脚本
   list        查看已安装节点
   add         新增 VLESS WS TLS、VMess WS TLS、VLESS XHTTP TLS 或 Reality 节点
   modify      修改已有节点配置
+  delete      删除一个已管理节点（不卸载 Xray）并重建配置
   delete-all  清空所有已管理节点（不卸载 Xray）并重建空配置
   links       重新生成并显示节点链接
   restart     重启 Xray 服务
@@ -2710,6 +2739,7 @@ show_menu() {
     ui_option "2" "查看节点"
     ui_option "3" "新增节点"
     ui_option "4" "修改节点"
+    ui_option "5" "删除节点"
 
     echo
     ui_group "服务管理"
@@ -2719,8 +2749,8 @@ show_menu() {
 
     echo
     ui_group "危险操作"
-    ui_option "5" "清空所有节点"
     ui_option "8" "卸载"
+    ui_option "10" "清空所有节点"
     ui_option "0" "退出"
     choice="$(prompt "请选择")"
     case "${choice}" in
@@ -2728,11 +2758,12 @@ show_menu() {
       2) run_menu_action cmd_list ;;
       3) run_menu_action cmd_add ;;
       4) run_menu_action cmd_modify ;;
-      5) run_menu_action cmd_delete_all ;;
+      5) run_menu_action cmd_delete ;;
       6) run_menu_action cmd_links ;;
       7) run_menu_action cmd_restart ;;
       8) run_menu_action cmd_uninstall ;;
       9) run_menu_action cmd_update_xray ;;
+      10) run_menu_action cmd_delete_all ;;
       0) return ;;
       *)
         warn "未知选项：${choice}"
@@ -2753,6 +2784,7 @@ dispatch_command() {
     list) cmd_list ;;
     add) cmd_add ;;
     modify) cmd_modify ;;
+    delete) cmd_delete ;;
     delete-all) cmd_delete_all ;;
     links) cmd_links ;;
     restart) cmd_restart ;;
