@@ -736,6 +736,22 @@ validate_port_number() {
   [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 ))
 }
 
+require_json_number() {
+  local label="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[0-9]+$ ]] || die "${label} 必须是数字，当前值不合法。"
+}
+
+require_json_object() {
+  local label="$1"
+  local value="$2"
+
+  [[ -n "${value}" ]] || die "${label} 为空，无法写入状态文件。"
+  jq -e 'type == "object"' <<<"${value}" >/dev/null 2>&1 \
+    || die "${label} 不是有效 JSON 对象，无法写入状态文件。"
+}
+
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -1531,6 +1547,7 @@ state_exists() {
 reset_state_file() {
   local tmp_state
   require_jq
+  require_json_number "客户端连接端口" "${ws_client_port}"
   mkdir -p "${STATE_DIR}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq -n \
@@ -1569,6 +1586,7 @@ load_state_globals() {
 update_state_ws_metadata() {
   local tmp_state
   ensure_state
+  require_json_number "客户端连接端口" "${ws_client_port}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq \
     --arg uuid "${uuid}" \
@@ -1592,6 +1610,7 @@ sync_ws_public_port_in_state() {
   local tmp_state
 
   ensure_state
+  require_json_number "客户端连接端口" "${ws_client_port}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq --argjson client_port "${ws_client_port}" '
     .ws.client_port = $client_port
@@ -1633,6 +1652,7 @@ append_node_json_to_state() {
   local tmp_state
 
   ensure_state
+  require_json_object "节点配置" "${node_json}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq --argjson node "${node_json}" '.nodes += [$node]' "${STATE_FILE}" >"${tmp_state}"
   chmod 600 "${tmp_state}" 2>/dev/null || true
@@ -1640,6 +1660,8 @@ append_node_json_to_state() {
 }
 
 vless_ws_node_json() {
+  require_json_number "VLESS WS 监听端口" "${vless_ws_port}"
+  require_json_number "VLESS WS 客户端公开端口" "${vless_ws_public_port:-$vless_ws_port}"
   jq -n \
     --arg tag "${vless_ws_tag}" \
     --arg uuid "${uuid}" \
@@ -1659,6 +1681,8 @@ vless_ws_node_json() {
 }
 
 vmess_ws_node_json() {
+  require_json_number "VMess WS 监听端口" "${vmess_ws_port}"
+  require_json_number "VMess WS 客户端公开端口" "${vmess_ws_public_port:-$vmess_ws_port}"
   jq -n \
     --arg tag "${vmess_ws_tag}" \
     --arg uuid "${uuid}" \
@@ -1678,6 +1702,8 @@ vmess_ws_node_json() {
 }
 
 vless_xhttp_node_json() {
+  require_json_number "VLESS XHTTP 监听端口" "${vless_xhttp_port}"
+  require_json_number "VLESS XHTTP 客户端公开端口" "${vless_xhttp_public_port:-$vless_xhttp_port}"
   jq -n \
     --arg tag "${vless_xhttp_tag}" \
     --arg uuid "${uuid}" \
@@ -1697,6 +1723,8 @@ vless_xhttp_node_json() {
 }
 
 reality_node_json() {
+  require_json_number "Reality 监听端口" "${reality_port}"
+  require_json_number "Reality 目标端口" "${reality_target_port}"
   jq -n \
     --arg tag "${reality_tag}" \
     --arg uuid "${uuid}" \
@@ -1726,24 +1754,30 @@ reality_node_json() {
 }
 
 append_selected_nodes_to_state() {
+  local node_json
+
   if (( vless_ws_enabled )); then
     vless_ws_tag="$(make_unique_tag "vless-ws-tls-${vless_ws_port}")"
-    append_node_json_to_state "$(vless_ws_node_json)"
+    node_json="$(vless_ws_node_json)"
+    append_node_json_to_state "${node_json}"
   fi
 
   if (( vmess_ws_enabled )); then
     vmess_ws_tag="$(make_unique_tag "vmess-ws-tls-${vmess_ws_port}")"
-    append_node_json_to_state "$(vmess_ws_node_json)"
+    node_json="$(vmess_ws_node_json)"
+    append_node_json_to_state "${node_json}"
   fi
 
   if (( vless_xhttp_enabled )); then
     vless_xhttp_tag="$(make_unique_tag "vless-xhttp-tls-${vless_xhttp_port}")"
-    append_node_json_to_state "$(vless_xhttp_node_json)"
+    node_json="$(vless_xhttp_node_json)"
+    append_node_json_to_state "${node_json}"
   fi
 
   if (( reality_enabled )); then
     reality_tag="$(make_unique_tag "vless-reality-vision-${reality_port}")"
-    append_node_json_to_state "$(reality_node_json)"
+    node_json="$(reality_node_json)"
+    append_node_json_to_state "${node_json}"
   fi
 }
 
@@ -2487,6 +2521,7 @@ modify_ws_node() {
   local label
 
   load_state_globals
+  require_json_number "节点索引" "${index}"
   current_port="$(jq -r --argjson index "${index}" '.nodes[$index].port' "${STATE_FILE}")"
   current_public_port="$(jq -r --argjson index "${index}" '.nodes[$index].public_port // .nodes[$index].port' "${STATE_FILE}")"
   current_path="$(jq -r --argjson index "${index}" '.nodes[$index].path' "${STATE_FILE}")"
@@ -2516,6 +2551,9 @@ modify_ws_node() {
     new_public_port="${ws_client_port}"
   fi
 
+  require_json_number "节点索引" "${index}"
+  require_json_number "${label} 监听端口" "${new_port}"
+  require_json_number "${label} 客户端公开端口" "${new_public_port}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq \
     --argjson index "${index}" \
@@ -2546,6 +2584,7 @@ modify_reality_node() {
   local new_short_id
   local tmp_state
 
+  require_json_number "节点索引" "${index}"
   current_addr="$(jq -r --argjson index "${index}" '.nodes[$index].addr' "${STATE_FILE}")"
   current_port="$(jq -r --argjson index "${index}" '.nodes[$index].port' "${STATE_FILE}")"
   current_target="$(jq -r --argjson index "${index}" '.nodes[$index].target' "${STATE_FILE}")"
@@ -2560,6 +2599,9 @@ modify_reality_node() {
   parse_reality_target "${target_input}"
   new_short_id="$(ask_short_id "${current_short_id}")"
 
+  require_json_number "节点索引" "${index}"
+  require_json_number "Reality 监听端口" "${new_port}"
+  require_json_number "Reality 目标端口" "${reality_target_port}"
   tmp_state="$(mktemp "${STATE_DIR}/state.XXXXXX")"
   jq \
     --argjson index "${index}" \
@@ -2590,6 +2632,7 @@ cmd_modify() {
   ensure_state
   ui_title "修改节点" "选择一个已有节点后更新端口、Path、Host/SNI 或 Reality 参数。"
   index="$(select_node_index)"
+  require_json_number "节点索引" "${index}"
   type="$(jq -r --argjson index "${index}" '.nodes[$index].type' "${STATE_FILE}")"
 
   case "${type}" in
@@ -2623,6 +2666,7 @@ cmd_delete() {
   ensure_state
   ui_title "删除节点" "选择一个已管理节点并重建 Xray 配置，不卸载 Xray。"
   index="$(select_node_index)"
+  require_json_number "节点索引" "${index}"
   node_json="$(jq -c --argjson index "${index}" '.nodes[$index]' "${STATE_FILE}")"
   node_name="$(node_display_name_from_json "${node_json}")"
 
