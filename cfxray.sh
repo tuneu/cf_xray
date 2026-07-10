@@ -810,18 +810,13 @@ ask_port_with_random_default() {
   local label="$1"
   local value
   local prompt_label="${label}"
-  local prompt_text
+  local default_port
 
   [[ "${prompt_label}" == *"端口"* ]] || prompt_label="${prompt_label}端口"
 
   while true; do
-    prompt_text="$(printf '%b%s%b %b[回车随机端口]%b: ' "${cyan}" "${prompt_label}" "${plain}" "${dim}" "${plain}")"
-    read -r -p "${prompt_text}" value
-
-    if [[ -z "${value}" ]]; then
-      value="$(generate_random_port)"
-      ui_note "已随机生成端口：${value}"
-    fi
+    default_port="$(generate_random_port)"
+    value="$(prompt "${prompt_label}" "${default_port}")"
 
     if ! validate_port_number "${value}"; then
       warn "端口必须是 1-65535 的数字。"
@@ -1321,7 +1316,7 @@ select_protocols() {
 
   ui_section "选择节点类型"
   ui_note "多个选项可用逗号或空格分隔，例如 1,3。"
-  ui_option "1" "VLESS XHTTP TLS" "经 Cloudflare CDN 回源"
+  ui_option "1" "VLESS XHTTP TLS" "经 Cloudflare CDN 回源，Loon 暂不支持"
   ui_option "2" "VLESS WS TLS" "经 Cloudflare CDN 回源"
   ui_option "3" "VMess WS TLS" "经 Cloudflare CDN 回源"
   ui_option "4" "VLESS Reality Vision" "直连 TCP，不走 CDN"
